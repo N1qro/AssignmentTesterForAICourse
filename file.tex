@@ -1,0 +1,286 @@
+\documentclass[a4paper, 12pt]{article}
+\usepackage[osf]{libertinus}
+\pagestyle{plain}
+\usepackage[parfill]{parskip}
+\usepackage{tabularx}
+\usepackage{tikz}
+\usepackage[fontsize=13pt]{scrextend} 
+\usepackage[a4paper,top=3cm,bottom=3cm,left=3cm,right=3cm]{geometry}
+\usepackage{graphicx, wrapfig} 
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{float}
+\lstdefinestyle{code}{
+	basicstyle=\ttfamily\small,
+	keywordstyle=\color{blue},
+	commentstyle=\color{gray},
+	stringstyle=\color{teal},
+	frame=single,
+	breaklines=true,
+	showstringspaces=false
+}
+\lstset{style=code}
+% Removed forced page breaks before each section
+
+\begin{document}
+\begin{titlepage}
+	\centering
+    \begin{figure}[t]
+    \centering\includegraphics[width=0.98\textwidth]{innou-logo.png}
+\end{figure}
+
+	{\Large Introduction to Artificial Intelligence\\[0.5em]}
+	{\Large \textbf{Assignment 1}: Ring Destroyer\\[2em]}
+	{\Huge \textbf{Solution report}}\\[2em]
+	{\textbf{Author:} Andrei Novikov}\\[0.5em]
+    {\textbf{Group:} B24-CSE-02}\\[0.5em]
+    {\textbf{Email:} an.novikov@innopolis.university}\\[0.5em]
+	{\textbf{Date:} November 6, 2025}\\[3em]
+	\vfill
+\end{titlepage}
+
+\clearpage
+
+\section{Overview}
+This assignment required to create an agent (Frodo) that had to first find Gollum and then Mount Doom on 13x13 world map that contained enemies. Each enemy has it's own perception zone that can shrink or grow based on Frodo's equipment. Initially, he has the ring on his neck. He can equip this ring and take it off, but he should not be seen by enemies at any time. Some maps contain Mythril Coat. It combines the benefit of wearing and not wearing the ring. The agent has to determine the length of shortest path (Start $->$ Gollum $->$ Mount Doom) or state that the path can not be found.
+
+\section{PEAS Description}
+
+    \begin{enumerate}
+        \item \textbf{Performance}: Minimize total safe path length (Start $\to$ Gollum $\to$ Mount Doom), maximize success rate over random maps, avoid lethal visits, correctly classify unsolvable maps, do not go out of bounds
+
+        \item \textbf{Environment}: A 13x13 grid with static enemies whose lethal zones depend on agent's equipment. On this map the agent can find the Mythril Coat, Gollum, and Mount Doom
+
+        \item \textbf{Actuators}: Move (m x y), put ring on (r), remove ring (rr), emit end signal with path length or unsolvable marker (e $<$len$>$ / e -1)
+
+        \item \textbf{Sensors}:
+            \begin{enumerate}
+                \item \textbf{External}: Interactor responses listing coordinates and types of nearby dangers/agents within perception radius, initial variant number and Gollum coordinates. Additionally, Mount Doom coordinates after the agent reaches Gollum.
+
+                \item \textbf{Internal}: Current equipment state, the state of the map (dangers/items), the movement tree of an agent, the possible move pool.
+            \end{enumerate}
+    \end{enumerate}
+    
+
+\section{Algorithm Description and Architecture}
+
+\subsection{General Algorithm flow}
+The agent starts at the safe point. He analyzes the environment around him and tries to toggle the ring immediately. After that, the agent sets Gollum as his target. Iteration after iteration, the agent tries to move closer to Gollum, recording the map around him. If it reaches the Gollum, the agent receives the Mount Doom's coordinates, changes the destination, and tries to move towards it. If at any iteration, the pool of possible agent moves will become exhausted, the agent will try to remember whether it has seen a Mythril Coat or not. If yes, it moves towards it, picks it up, and tries to move towards it's original goal once more. The ring toggles on and off automatically. When an agent has a Mythril Coat, the ring is toggled off for the rest of the simulation. If the path is complex (requires several equipment switches), the agent will take it if it is certain that it won't die at any point. After getting stuck or reaching Mount Doom, the agent calculates the minimal sum of taken routes (without rerunning the algorithm) and displays it as an answer. The answer "e -1" means no path was found.
+
+\subsection{A* movement strategy}
+The A* algorithm in my code works by maintaining the priority queue of unvisited cells and a set of visited cells. When an agent starts moving from the start, he has up to two possible ways of moving. The order of the traversal depends on the proximity of an object. The closer the cell is, the more likely it will be chosen. I have chosen the Manhattan heuteristic for this task. Since the agent can not move diagonally and the priority queue is a lazy heap. Meaning, I do not use the decreaseKey() operation. The queue may contains many equal cells with different priority. I just take the most optimal at each iteration and only once. At each iteration we try to discover more possible moves beside an agent. If the A* gives a cell that is far away from an agent, I use a LCA movement tree to safely come back to the cell from which the move was discovered. Then, perform the move.
+
+\subsection{Backtracking movement strategy}
+The Backtracking algorithm in my code is a BFS-driven explorer. The strategy uses moves from FIFO queue: it selects the oldest discovered edge. If the cell, where the agent stands, is not a start of this edge, the agent uses the same LCA movement tree as in A* strategy to safely trace back it's steps to the start. Later, the move to the end of the edge is performed and the map is scanned for more possible moves, repeating everything until the very end of the program.
+
+\subsection{Modules and Responsibilities}
+
+I have created a high-quality code that uses several programming patterns: observer, strategy, state. The code separates concerns into modules. So, knowledge, planning, movement, and analysis are separated and do not intersect. The code allows agent to quick swap between modules at a runtime. For example, it can move between point A to point B with A* and from point B to point C with backtracking quite easily. The agent's wiring (logic) is done at the end of the source code and can be adjusted if the task requirements will change. The code is also easy to maintain.
+
+\begin{itemize}
+    \item \textbf{DynamicMap}: Contains the world that agent perceived while exploring. Each cell contains the danger level with certain equipment. Possible danger levels: Safe, Unsafe, Unknown. Provides a way to record the danger levels in each cell. Additionally, allows to store the position information of any entity 
+
+    \begin{lstlisting}[language=Go]
+type DynamicMap interface {
+	// Sets danger level for a cell with given equipment
+	setSafeWith(agentEquipment Equipment, position Point)
+	setUnsafeWith(agentEquipment Equipment, position Point)
+	safeWith(agentEquipment Equipment, position Point) bool
+
+	// Record/Get information position of entities
+	setPositionInfo(entity Entity, position, seenFrom Point)
+	getPositionInfo(entity Entity) (position, seenFrom Point, wasSaved bool)
+	getEntityOnPosition(position Point) (entity Entity, found bool)
+	removePositionInfo(entity Entity)
+}
+    \end{lstlisting}
+
+  \item \textbf{AnalyzerModule}: The eyes of an agent. When an agent moves in the world, it perceives the information around him, including enemies, entities, and free cells. On each iteration tries to swap on and off the ring to gain as much information about the world as possible 
+
+    \begin{lstlisting}[language=Go]
+type AnalyzerModule interface {
+	// Reads info from stdin and updates the agent's map with dangerous cells
+	PerceiveEnvironmentAt(position Point)
+
+	// Tries safely swapping between equipment to explore the map
+	TryReequip(position Point) (swapped bool)
+}
+    \end{lstlisting}
+
+
+    \item \textbf{Equipment State}: Centralizes the access to the agent's state internally. Main purpose of this state is to remember to notify the interactor that the equipment has changed.
+
+    \begin{lstlisting}[language=Go]
+type EquipmentState interface {
+	GetEquipment() Equipment
+	SetEquipment(Equipment)
+
+	// Switches between ring/nothing without duplicate equipping
+	SwapEquipment()
+
+	// Returns the result of SwapEquipment
+	WhatEquipmentWillBeSwappedWith() (new Equipment)
+}
+
+    \end{lstlisting}
+  
+  \item \textbf{StatefulMovementTree}: When an agent moves, he has to remember the path that it took to reach from start to certain point. This tree allows to record each move and assign any information (state) to it. Additionally, it can reconstruct the path between any two explored points
+
+    \begin{lstlisting}[language=Go]
+type StatefulMovementTree[State any] interface {
+	// Build a new node in the tree
+	recordNewMove(from, to Point)
+
+	// Return sequence (trace) of steps between points
+	getMoves(from, to Point) []PointWithState[State]
+
+	hasVisited(position Point) bool
+	pathLengthAt(position Point) uint8
+
+	// Record any extra info between transitions
+	setStateBetween(posA, posB Point, state State)
+	stateBetween(posA, posB Point) (state State, wasSet bool)
+}
+    \end{lstlisting}
+  
+  \item \textbf{MovementStrategy}: Responsible for generating optimal moves for the agent. Allows to change the destination at any iteration of the algorithm.
+
+    \begin{lstlisting}[language=Go]
+type MovementStrategy interface {
+	// Determines the next exploration move for an agent 
+	GetNextOptimalMove() (from, to Point, valid bool)
+
+	// Determines whether an agent can walk into a new point and adds it to the pool of possible moves
+	ConsiderMove(walkedPathLength int, from, to Point) (wasAdded bool)
+
+	// Changes the destination of the strategy
+	ResetGoal(start, goal Point)
+	Goal() (goal Point)
+
+	// Whether the pool of moves is empty or not
+	HasTheoreticalMoves() bool
+
+	// Returns a start point of the strategy
+	Start() Point
+}
+    \end{lstlisting}
+
+  \item \textbf{MovementModule}: The actual wheels of the agent. Combines map, movement tree, and movement strategy inside to wire the movement logic of an agent together. Has an event API that allows to notify other modules that the agent has moved somewhere
+
+    \begin{lstlisting}[language=Go]
+type MovementModule interface {
+	// Makes the agent move to the target
+	Move() bool
+
+	// Checks neighbouring cells for the ability to move into them
+	DiscoverNewMoves()
+
+	// Gives coordinates of the agent
+	GetCurrentPosition() Point
+
+	// Interface methods that allow external modules to receive signals when the agent is moving or reaches an entity
+	AddOnMoved(cb func(from, to Point))
+	AddOnReachedEntity(cb func(entity Entity, position Point))
+
+	// Returns current path length in given point
+	PathLengthAt(position Point) uint8
+
+	// Switches agent's target to other cell
+	ResetForNewGoal(start, goal Point)
+
+	// Moves to already explored cell. Traces back steps
+	MoveTo(to Point)
+
+	// Moves to the adjacent tile
+	MoveToNeighbour(neighbour Point) bool
+}
+    \end{lstlisting}
+\end{itemize}
+
+\section{Statistical Analysis}
+\subsection{Test Data}
+
+I have generated 1000 maps in total and launched an algorithm with A*/Backtracking strategies and vision of 1/2 cells in radius for both. If you want to try and reproduce the results, please follow this link to the tester \url{https://google.com}. The README file contains all the instructions on how to do so. \textbf{The seed for the tests is 42}
+
+
+Here are the statistics:  
+
+\begin{table}[H]
+\centering
+\caption{Performance summary (Vision 1; difference = $\frac{BFS}{A*}$)}
+\begin{tabular}{lrrr}
+\toprule
+Metric & A* strategy & Backtracking strategy & Vision 1 diff. \\
+\midrule
+Solved\%               & 76.7\%   & 77.1\%   & {\color{ForestGreen}1,01x}  \\
+Unsolved\%             & 23.3\%   & 22.9\%   & {\color{ForestGreen}0,98x}  \\
+Mean (s)               & 0.400    & 1.096 & {\color{red}2,74x}   \\
+Median (s)             & 0.300    & 0.994 & {\color{red}3,31x}   \\
+Mode (s)               & 0.872    & 1.567 & {\color{red}1.80x}   \\
+Standart deviation (s)             & 0.396    & 0.834 & {\color{red}2,11x}   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Performance summary (Vision 2; difference = $\frac{BFS}{A*}$)}
+\begin{tabular}{lrrr}
+\toprule
+Metric & A* strategy & Backtracking strategy & Vision 2 diff. \\
+\midrule
+Solved\%               & 77.6\%   & 77.6\%   & 1x  \\
+Unsolved\%             & 22.4\%   & 22.4\%   & 1x  \\
+Mean (s)               & 0.655    & 2.082 & {\color{red}3,18x}   \\
+Median (s)             & 0.458    & 1.925 & {\color{red}4,20x}   \\
+Mode (s)               & 1.432    & 1.952 & {\color{red}1,36x}   \\
+Standart deviation (s)             & 0.693    & 1.554 & {\color{red}2,24x}   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analysis of test data}
+
+From the test results we can observe that in general A* strategy performs around 2.8-3 times faster than backtracking strategy even on the small map of 13x13 cells, as expected. The backtracking has worse execution time statistics, but it found a few more paths on map than A* strategy.
+
+\subsection{Interesting remarks}
+\begin{enumerate}
+    \item An algorithm run on an agent with better vision (r=1 $->$ r=2) slows down the execution time of both algorithms. This is happening due to the need of an algorithm to continuously scan the environment around him in a 3x larger zone (8 $->$ 24 cells). Hence, the algorithms can potentially be optimized by introducing smart scanning of the environment after moving.
+
+    \item Backtracking found more paths than A*. In my opinion, this happened because backtracking explores the map more thoroughly. I coded an agent so that it performs certain moves only if he is guaranteed to survive. Hence, the order of map traversal can impact the answer.
+\end{enumerate}
+
+
+
+
+\section{Unsolvable Map Illustration}
+Out of 1000 Variant 1 maps, 224 were classified unsolvable. Potentially, some of them are falsely identified, since the agent's confidence in path depends on the order of traversal.
+
+
+
+\section{Limitations and Improvements}
+\begin{itemize}
+	\item Current analysis lacks A* and Variant 2 empirical tables (placeholders provided).
+	\item No memory profiling yet; tree and frontier growth could be summarized.
+	\item Equipment toggle cost treated as zero; could incorporate micro-cost for decision parsimony.
+	\item Edge state model assumes deterministic safety; stochastic extensions would require probability tracking.
+\end{itemize}
+
+\section{Checklist / TODO Before Final Submission}
+\begin{itemize}
+	\item Replace author name and ensure PDF filename matches specification.
+	\item Populate A* Variant 1 and Variant 2 tables with collected stats (1000 maps each).
+	\item Add unsolvable map graphics and any noteworthy edge-case maps.
+	\item Verify PEAS section aligns with actor behavior and interactor protocol.
+	\item Confirm only standard libraries used in submitted source.
+	\item Re-run plagiarism self-check and ensure originality.
+\end{itemize}
+
+\section{References}
+Internal course specification (Assignment Plaintext) and standard AI search literature (Russell \& Norvig for PEAS framing).
+
+\end{document}
